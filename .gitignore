@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.egg-info/
+
+# Local-only: design/threat docs reveal deployment posture + full API surface.
+# Kept out of git — do not publish. See README for the operational contract.
+docs/
+THREAT_MODEL.md
