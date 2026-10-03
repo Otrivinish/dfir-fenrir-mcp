@@ -69,3 +69,43 @@ def test_refcache_rejects_path_injecting_ids():
     assert refcache.lookup("INC-9002") is None
     assert refcache.lookup("INC-9003") is None
     assert refcache.lookup("INC-9004") == "good-uuid-0001"  # clean id still cached
+
+
+# ── Immutable PREFIX-YYYY-NNNNN references (FENRIR incident-ref redesign) ────
+
+def test_refcache_accepts_new_and_legacy_ref_formats():
+    refcache.learn({"items": [{"id": "uuid-new", "ref": "INC-2026-00009"},
+                              {"id": "uuid-org", "ref": "ACME-2026-00123"},
+                              {"id": "uuid-old", "ref": "INC-0006"}]})
+    assert refcache.lookup("INC-2026-00009") == "uuid-new"
+    assert refcache.lookup("ACME-2026-00123") == "uuid-org"
+    assert refcache.lookup("INC-0006") == "uuid-old"
+    assert refcache.rewrite_path("/api/incidents/INC-2026-00009/timeline") == ("/api/incidents/uuid-new/timeline", None)
+
+
+def test_ref_pattern_never_admits_path_characters():
+    for bad in ("INC-2026/../tokens", "INC-..", "INC-2026-00009/x", "INC-2026-00009.", "inc-2026-00009",
+                "INC-2026-00009-1-2", "I-0001"):
+        assert not refcache.REF_RE.match(bad), bad
+
+
+def test_unknown_ref_resolves_with_exact_lookup_before_scan(monkeypatch):
+    import asyncio
+    import httpx
+    from fenrir_mcp import client
+    calls = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        calls.append(str(req.url))
+        if req.url.path == "/api/incidents" and req.url.params.get("ref") == "INC-2026-00042":
+            return httpx.Response(200, json={"items": [{"id": "uuid-42", "ref": "INC-2026-00042"}]})
+        if req.url.path == "/api/incidents/uuid-42/timeline":
+            return httpx.Response(200, json={"items": []})
+        return httpx.Response(404, json={"detail": "unexpected"})
+
+    monkeypatch.setattr(client, "_client", httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://fenrir.test"))
+    monkeypatch.setattr(client, "_bearer", lambda: {})
+    out = asyncio.run(client.request("GET", "/api/incidents/INC-2026-00042/timeline"))
+    assert out == {} or out.get("items") == [] or out == {"items": []}
+    assert any("ref=INC-2026-00042" in c for c in calls)
+    assert not any("limit=200" in c for c in calls)  # no 200-incident scan needed

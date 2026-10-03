@@ -15,7 +15,9 @@ async def fenrir_legal_list(
 ) -> dict | list:
     """Legal/stakeholder reads: regulatory deadlines + templates and incident
     stakeholders (incident_id required), or the global stakeholder-matrix rules.
-    Deadline timestamps are UTC ISO 8601."""
+    Deadline timestamps are UTC ISO 8601; breach_detected_at is each deadline's
+    anchor. internal_target=true marks a planning target, not a statutory
+    deadline (GDPR Art. 34); deadline_months marks a calendar-month window."""
     if view == "matrix":
         return await request("GET", "/api/stakeholder-matrix")
     if not incident_id:
@@ -42,7 +44,15 @@ async def fenrir_legal_write(
 ) -> dict | list:
     """Legal/stakeholder writes: add/update regulatory deadlines, initialize
     deadlines from templates (e.g. GDPR 72 h), add stakeholders (single or bulk),
-    update one, and manage stakeholder-matrix rules (global; no incident_id)."""
+    update one, and manage stakeholder-matrix rules (global; no incident_id).
+    deadlines_initialize data: {regulations: [GDPR, NIS2, ...], breach_detected_at?,
+    anchors?: {NIS2: ts}}; the anchor defaults to the incident's detected_at (422
+    anchor_required if none); re-running only adds missing rows. deadline_add
+    breach_detected_at also defaults to detected_at. deadline_update: waiving
+    (status=waived) needs completion_notes >= 10 chars (422 notes_required);
+    re-anchor = {breach_detected_at, reason >= 10 chars}. Closed incident: add,
+    initialize and re-anchor give 409 incident_closed; status/notes still work.
+    Deleting a deadline: fenrir_delete with reason."""
     body = data or {}
     if action in ("matrix_add", "matrix_update"):
         if action == "matrix_add":
@@ -74,7 +84,8 @@ async def fenrir_legal_write(
 async def fenrir_costs_list(
     incident_id: str, view: Literal["costs", "summary", "business_impact"] = "costs"
 ) -> dict | list:
-    """Incident cost reads: line items, cost summary, business-impact assessment."""
+    """Incident cost reads: line items, cost summary, business-impact assessment.
+    summary.by_currency has totals per currency; with mixed currencies the top-level totals/currency are null."""
     paths = {
         "costs": f"/api/incidents/{incident_id}/costs",
         "summary": f"/api/incidents/{incident_id}/costs/summary",
