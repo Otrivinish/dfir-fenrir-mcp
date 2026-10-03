@@ -16,6 +16,7 @@ async def fenrir_people_list(
     view: Literal[
         "assignments", "assignable_users", "roster", "on_call", "on_call_current",
         "presence", "handoffs", "handoffs_pending", "teams", "team_members", "operational_roles",
+        "incident_access",
     ],
     incident_id: str | None = None,
     team_id: str | None = None,
@@ -23,9 +24,15 @@ async def fenrir_people_list(
     """People/coordination reads: per-incident role assignments, assignable users,
     responder roster, on-call schedule + current, incident page viewers, incident
     handoffs, my pending handoffs, teams (+members with team_id), and the
-    operational role catalog (CISA IR roles)."""
+    operational role catalog (CISA IR roles).
+    incident_access (incident_id): my rights on that incident, {is_lead, capabilities[]}.
+    The incident lead is an admin, or an analyst (token role cap applies) assigned as
+    Incident Commander or Deputy there; it gets read_audit_log, manage_le_package,
+    set_teams, override_gate, remove_any_assignment. assign_lead_roles = may assign or
+    remove IC/Deputy. Check it before those calls instead of guessing from your role."""
     per_incident = {
         "assignments": "assignments", "presence": "presence/viewers", "handoffs": "handoffs",
+        "incident_access": "access",
     }
     if view in per_incident:
         if not incident_id:
@@ -58,10 +65,16 @@ async def fenrir_people_write(
     user_id: str | None = None,
     data: dict | None = None,
 ) -> dict:
-    """People/coordination writes: assign an operational role (data: user + role),
+    """People/coordination writes: assign an operational role (data: user_id + role_id),
     unassign one (item_id = assignment id; reversible, hence not a delete-tier op),
     create/acknowledge handoffs, manage on-call entries, update a roster entry
-    (user_id + data)."""
+    (user_id + data).
+    assign_role / unassign_role: Incident Commander and Deputy make an analyst the
+    incident lead, so only the lead or an admin can assign or remove them (while the
+    incident has no lead: its creator or today's on-call analyst); else 403
+    not_incident_lead. The assignee must already see the incident (422
+    assignee_no_access: an assignment grants no access) and is notified. You may
+    unassign yourself; the lead may unassign anyone."""
     body = data or {}
     if action in ("assign_role", "unassign_role", "handoff_create", "handoff_acknowledge"):
         if not incident_id:
