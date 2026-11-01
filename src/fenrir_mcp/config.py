@@ -13,6 +13,10 @@ TIER = {"readonly": 0, "standard": 1, "full": 2}
 
 CONNECT_TIMEOUT = 5.0
 READ_TIMEOUT = 120.0
+# M6 (G-fix B): export_create / le_package_prepare build a multi-GiB bundle inside ONE request and return its
+# one-time key / password only in that response. Their read timeout matches the FENRIR edge's 30-minute request
+# window (Caddy read_body / write), so the client never gives up before the server can answer.
+LONG_READ_TIMEOUT = 1800.0
 
 # Server-side token expiry is days-granular (min 1 day); the 8 h design TTL is
 # enforced client-side against the recorded issue time. See docs/DESIGN.md §5.2.
@@ -134,6 +138,22 @@ def read_upload(file_path: str) -> tuple[str, bytes]:
     finally:
         os.close(fd)
     return p.name, b"".join(chunks)
+
+
+def open_upload(file_path: str):
+    """Validate against the allowlist and open read-only through a single file descriptor (the same
+    TOCTOU closure as read_upload), WITHOUT reading it. Returns (filename, unbuffered binary file
+    object, size); the caller streams it in bounded pieces (os.pread) and closes it."""
+    p = check_upload_path(file_path)
+    fd = os.open(p, os.O_RDONLY)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise RuntimeError(f"not a regular file: {p}")
+        return p.name, os.fdopen(fd, "rb", buffering=0), st.st_size
+    except BaseException:
+        os.close(fd)
+        raise
 
 
 def log(msg: str) -> None:

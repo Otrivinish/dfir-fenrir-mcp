@@ -1,6 +1,6 @@
 """Escape-hatch guard: the OpenAPI spec (live-fetched, cached 0600) is the contract;
-`fenrir_api` calls must name an operation that exists in it, pass the denylist,
-and use a verb the configured mode allows. No spec → the escape hatch refuses
+`fenrir_api` calls must name an operation that exists in it, pass the denylist
+and the credential denylist (R146), and use a verb the configured mode allows. No spec → the escape hatch refuses
 (fail closed); curated tools are unaffected."""
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import re
 import httpx
 
 from . import config, denylist
-from .client import FenrirError, ssl_context
+from .client import USER_AGENT, FenrirError, ssl_context
 
 _VERBS_BY_MODE = {
     "readonly": {"GET"},
@@ -43,7 +43,8 @@ def load_spec() -> dict | None:
     global _spec, _ops
     try:
         resp = httpx.get(
-            config.fenrir_url() + "/api/openapi.json", verify=ssl_context(), timeout=config.CONNECT_TIMEOUT
+            config.fenrir_url() + "/api/openapi.json", verify=ssl_context(), timeout=config.CONNECT_TIMEOUT,
+            headers={"User-Agent": USER_AGENT},
         )
         resp.raise_for_status()
         _spec = resp.json()
@@ -69,15 +70,20 @@ def get_spec() -> dict | None:
 def validate(method: str, path: str, mode: str) -> None:
     """Raise FenrirError unless method+path is allowed for the escape hatch."""
     verb = method.upper()
+    reason = denylist.credential_denied(verb, path)
+    if reason:
+        raise FenrirError(f"denied by policy: {reason}")
     if verb not in _VERBS_BY_MODE[mode]:
         raise FenrirError(
             f"{verb} is not allowed through fenrir_api in mode={mode} "
             f"(allowed: {sorted(_VERBS_BY_MODE[mode])})"
         )
-    p = denylist.normalize(path)
-    reason = denylist.is_denied(verb, p)
+    # The raw path: is_denied normalises it once, exactly as client.request does — a second
+    # pass would cut a decoded "%3F"/"%23" short and miss the "/../" behind it (R150).
+    reason = denylist.is_denied(verb, path)
     if reason:
         raise FenrirError(f"denied by policy: {reason}")
+    p = denylist.normalize(path)
     if _ops is None:
         raise FenrirError(
             "no OpenAPI spec available to validate against — FENRIR unreachable and no cache. "

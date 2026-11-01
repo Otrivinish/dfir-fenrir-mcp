@@ -19,6 +19,11 @@ def main() -> None:
     p_login.add_argument("--name", default=None, help="token label (default: claude-mcp)")
     sub.add_parser("logout", help="revoke the stored token server-side and clear the local store")
     sub.add_parser("status", help="show stored-token metadata and check it against FENRIR")
+    p_tok = sub.add_parser("tokens", help="list or revoke your own FENRIR API tokens (uses the stored token)")
+    tok_sub = p_tok.add_subparsers(dest="tokens_command", required=True)
+    tok_sub.add_parser("list", help="list your API tokens (never their values)")
+    p_rev = tok_sub.add_parser("revoke", help="revoke one of your API tokens")
+    p_rev.add_argument("token_id", help="token id (from `fenrir-mcp tokens list`)")
 
     args = parser.parse_args()
     if args.command in (None, "serve"):
@@ -36,6 +41,8 @@ def main() -> None:
         sys.exit(cli.login(**kwargs))
     elif args.command == "logout":
         sys.exit(cli.logout())
+    elif args.command == "tokens":
+        sys.exit(cli.tokens_list() if args.tokens_command == "list" else cli.tokens_revoke(args.token_id))
     else:
         sys.exit(cli.status())
 
