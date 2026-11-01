@@ -78,8 +78,9 @@ def test_uncoded_403_keeps_role_cap_hint():
 
 def test_uncoded_and_validation_errors_unchanged():
     assert _message(404, {"detail": "Action not found"}) == "FENRIR returned 404: Action not found"
+    # L4: a list-shaped detail (FENRIR before L4) is shown as "loc: msg" pairs, still with no code.
     msg = _message(422, {"detail": [{"loc": ["body", "items"], "msg": "Field required"}]})
-    assert msg.startswith("FENRIR returned 422: [{") and "[code]" not in msg
+    assert msg == "FENRIR returned 422: body.items: Field required"
 
 
 def test_coded_422_and_429():

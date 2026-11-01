@@ -44,3 +44,47 @@ def test_not_incident_lead_is_coded_without_role_hint():
     msg = str(exc.value)
     assert msg.startswith("FENRIR returned 403: [not_incident_lead]")
     assert "role cap" not in msg
+
+
+# ── F2: assignable users limited to who can see an incident ────────────────────────────────────────
+
+def test_assignable_users_incident_filter(monkeypatch):
+    seen = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen.append((req.method, req.url.path, dict(req.url.params)))
+        return httpx.Response(200, json=[{"id": "u1", "username": "alice", "full_name": None}])
+
+    _mock(monkeypatch, handler)
+    out = asyncio.run(people.fenrir_people_list("assignable_users", incident_id=INC))
+    assert seen == [("GET", "/api/users/assignable", {"incident_id": INC})]
+    assert out[0]["username"] == "alice"
+    seen.clear()
+    asyncio.run(people.fenrir_people_list("assignable_users"))          # no incident: unchanged call
+    assert seen == [("GET", "/api/users/assignable", {})]
+
+
+def test_assignable_users_resolves_an_incident_ref(monkeypatch):
+    seen = []
+    ref = "INC-2026-00009"
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen.append((req.url.path, dict(req.url.params)))
+        if req.url.path == "/api/incidents":                             # ref lookup (?ref=)
+            return httpx.Response(200, json={"items": [{"id": INC, "ref": ref}], "next_cursor": None})
+        if req.url.path == f"/api/incidents/{INC}":
+            return httpx.Response(200, json={"id": INC, "ref": ref})
+        return httpx.Response(200, json=[])
+
+    _mock(monkeypatch, handler)
+    asyncio.run(people.fenrir_people_list("assignable_users", incident_id=ref))
+    assert seen[-1] == ("/api/users/assignable", {"incident_id": INC})   # the UUID, never the ref
+
+
+def test_person_reference_docstrings():
+    from fenrir_mcp.tools import tasks_respond
+    for fn in (tasks_respond.fenrir_task_write, tasks_respond.fenrir_respond_write, people.fenrir_people_write):
+        assert "assignee_no_access" in fn.__doc__ and "user_not_found" in fn.__doc__
+    assert '"assignee_id": null unassigns' in tasks_respond.fenrir_task_write.__doc__
+    assert "null" in tasks_respond.fenrir_respond_write.__doc__ and "decided_by_id" in tasks_respond.fenrir_respond_write.__doc__
+    assert "incident_id" in people.fenrir_people_list.__doc__ and "assignable_users" in people.fenrir_people_list.__doc__

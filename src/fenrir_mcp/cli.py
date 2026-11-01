@@ -1,4 +1,5 @@
-"""Companion CLI: login (password + TOTP → mint 8 h token), logout (revoke), status.
+"""Companion CLI: login (password + TOTP → mint 8 h token), logout (revoke), status,
+tokens list / tokens revoke <id> (the operator's own tokens, R144).
 
 The MCP server itself never touches passwords or TOTP — credential issuance is
 exclusively this interactive flow (threat model: denylist bans POST /api/tokens).
@@ -12,7 +13,7 @@ import sys
 import httpx
 
 from . import config, token_store
-from .client import ssl_context
+from .client import USER_AGENT, ssl_context
 
 # Least-privilege coupling (docs/DESIGN.md §5.2): the minted token defaults to
 # the weakest role that serves the configured mode.
@@ -26,6 +27,7 @@ def _client() -> httpx.Client:
         base_url=config.fenrir_url(),
         verify=ssl_context(),
         timeout=httpx.Timeout(30.0, connect=config.CONNECT_TIMEOUT),
+        headers={"User-Agent": USER_AGENT},
     )
 
 
@@ -146,4 +148,47 @@ def status() -> int:
             print(f"server:     {'ok — ' + r.json().get('username', '?') if r.status_code < 400 else f'rejected ({r.status_code})'}")
         except Exception as e:
             print(f"server:     unreachable ({e.__class__.__name__})")
+    return 0
+
+
+def _stored_bearer() -> tuple[str | None, dict]:
+    token = token_store.load_token() if token_store.token_age_ok() else None
+    return token, token_store.load_meta() or {}
+
+
+def tokens_list() -> int:
+    """List the operator's own API tokens (GET /api/tokens; never their values)."""
+    token, meta = _stored_bearer()
+    if not token:
+        return _fail("no fresh stored token — run `fenrir-mcp login`")
+    try:
+        with _client() as c:
+            r = c.get("/api/tokens", headers={"Authorization": f"Bearer {token}"})
+    except httpx.TransportError as e:
+        return _fail(f"cannot reach FENRIR at {config.fenrir_url()}: {e}")
+    if r.status_code >= 400:
+        return _fail(f"list failed ({r.status_code}): {r.json().get('detail', r.text[:200])}")
+    print(f"{'ID':36}  {'STATUS':8} {'ROLE':8} {'PREFIX':14} {'EXPIRES (UTC)':21} {'LAST USED (UTC)':21} NAME")
+    for t in r.json().get("items", []):
+        mine = "  (this MCP)" if t.get("id") == meta.get("token_id") else ""
+        print(f"{t['id']:36}  {t.get('status', '?'):8} {t['role']:8} {t['token_prefix']:14} "
+              f"{t.get('expires_at') or 'never':21} {t.get('last_used_at') or '-':21} {t['name']}{mine}")
+    return 0
+
+
+def tokens_revoke(token_id: str) -> int:
+    """Revoke one of the operator's own API tokens (DELETE /api/tokens/{id}); takes effect at once."""
+    token, meta = _stored_bearer()
+    if not token:
+        return _fail("no fresh stored token — run `fenrir-mcp login`")
+    try:
+        with _client() as c:
+            r = c.delete(f"/api/tokens/{token_id}", headers={"Authorization": f"Bearer {token}"})
+    except httpx.TransportError as e:
+        return _fail(f"cannot reach FENRIR at {config.fenrir_url()}: {e}")
+    if r.status_code >= 400:
+        return _fail(f"revoke failed ({r.status_code}): {r.json().get('detail', r.text[:200])}")
+    print(f"token {token_id} revoked")
+    if token_id == meta.get("token_id"):
+        print("that was this MCP's own token — run `fenrir-mcp logout` to clear it, then `fenrir-mcp login`")
     return 0

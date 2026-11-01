@@ -2,11 +2,13 @@
 hatch, in every mode. No mode unlocks it. See docs/TOOLS.md "Hard denylist".
 
 Invariant: bytes flow toward FENRIR only. Plus: the MCP never mints credentials,
-and auth endpoints have no MCP use.
+and auth endpoints have no MCP use. Plus (R150/R151): the model never receives a
+secret and never grants access.
 """
 
 from __future__ import annotations
 
+import posixpath
 import re
 from urllib.parse import unquote
 
@@ -23,6 +25,23 @@ _DENY: list[tuple[str, str, str]] = [
     ("GET", rf"/api/collections/{_V}", "collection package bytes"),
     ("*", rf"/api/le-package-ack/{_V}", "LE package retrieval/ack tokens are recipient-facing"),
     ("GET", rf"/api/incidents/{_V}/evidence/{_V}/photos/{_V}", "evidence photo bytes"),
+]
+
+# R150/R151 (owner principle 2026-10-07): through the MCP the model never RECEIVES a
+# secret and never GRANTS access; actions that reduce or restore access, and reads,
+# stay. Shared like _DENY: curated tools AND fenrir_api, every mode. Full match on the
+# canonical path, lower-cased. The FENRIR GUI keeps every one of these.
+_GRANT_WRITES = ("POST", "PUT", "PATCH")
+_GRANT_OR_SECRET_DENY: list[tuple[tuple[str, ...] | str, str, str]] = [
+    (_GRANT_WRITES, r"/api/users", "creating a user grants access and sets a password — FENRIR GUI only"),
+    (("PUT", "PATCH"), rf"/api/users/{_V}", "role / active / TOTP changes can grant access — FENRIR GUI only"),
+    ("*", rf"/api/users/{_V}/reset-password", "a password reset puts a credential in the model's hands — FENRIR GUI only"),
+    ("*", r"/api/integrations/siem-key/generate", "returns the inbound SIEM key in clear — FENRIR GUI only"),
+    (_GRANT_WRITES, r"/api/settings/api-keys(/[^/]+)?", "third-party service keys are secrets — FENRIR GUI only"),
+    (_GRANT_WRITES, r"/api/integrations/(smtp|webhooks|syslog)",
+     "SMTP / webhook / syslog config carries secrets and redirects outbound data — FENRIR GUI only"),
+    (_GRANT_WRITES, rf"/api/teams/{_V}/members(/.*)?",
+     "adding a team member grants incident access — FENRIR GUI only (removing one stays allowed)"),
 ]
 
 # Fail-closed drift rule: any path whose last segment is "download" is denied
@@ -43,8 +62,44 @@ _BINARY_CONTENT_TYPES = (
 )
 
 
+# Escape hatch only (R146): credential and auth management stays human-initiated —
+# the GUI, or the `fenrir-mcp login` / `tokens` CLI in a terminal. Curated tools
+# don't take arbitrary paths, so this list gates `fenrir_api` (openapi_guard).
+# Matched as a prefix on the canonical path (decoded, lower-case, dot-segments
+# resolved), ending at a segment boundary. methods "*" = every verb.
+_CRED_WRITES = ("POST", "PATCH", "PUT", "DELETE")
+_CREDENTIAL_DENY: list[tuple[tuple[str, ...] | str, str]] = [
+    ("*", r"/api/tokens"),                       # own tokens: create / list / revoke
+    ("*", r"/api/admin/tokens"),                 # every user's tokens (admin)
+    ("*", r"/api/sessions"),                     # own sessions: list / revoke / revoke-others / label
+    ("*", r"/api/admin/sessions"),               # every session (admin)
+    ("*", rf"/api/users/{_V}/sessions"),         # a user's sessions: list / revoke / revoke-all
+    ("*", rf"/api/users/{_V}/reset-password"),
+    ("*", rf"/api/users/{_V}/unlock"),
+    (_CRED_WRITES, r"/api/users"),               # create (password + role), role / active / TOTP reset, delete
+    ("*", r"/api/integrations/siem-key"),        # inbound SIEM key: generate returns the secret
+    (("PUT", "DELETE"), r"/api/settings/api-keys"),  # third-party service keys
+]
+_CREDENTIAL_REASON = (
+    "credential and auth management is human-only and never runs through the MCP "
+    "— use the FENRIR GUI (Settings → Account → API tokens, Admin → Users / API Tokens / Sessions) "
+    "or, for your own tokens, `fenrir-mcp tokens list|revoke` in a terminal"
+)
+
+
+def _unquote_all(path: str) -> str:
+    """Percent-decode until stable, so no layer of encoding hides a path."""
+    prev = None
+    while prev != path:
+        prev, path = path, unquote(path)
+    return path
+
+
 def normalize(path: str) -> str:
-    p = unquote(unquote(path)).split("?")[0].split("#")[0]
+    # Strip query/fragment BEFORE decoding, as httpx does: an encoded "%3F"/"%23" stays
+    # in the path on the wire, so it must not cut the path short here (R150: that let
+    # "/api/x%3F/../tokens" pass as "/api/x" while httpx sent "/api/tokens").
+    p = _unquote_all(path.split("?")[0].split("#")[0])
     p = re.sub(r"/{2,}", "/", p)
     if not p.startswith("/"):
         p = "/" + p
@@ -66,9 +121,23 @@ def is_denied(method: str, path: str) -> str | None:
     for methods, pattern, reason in _DENY:
         if methods in ("*", m) and re.fullmatch(pattern, p):
             return reason
+    for methods, pattern, reason in _GRANT_OR_SECRET_DENY:
+        if (methods == "*" or m in methods) and re.fullmatch(pattern, p.lower()):
+            return reason
     if p.rsplit("/", 1)[-1] == "download":
         if not any(re.fullmatch(a, p) for a in _TEXT_DOWNLOAD_ALLOW):
             return "downloads are denied — bytes flow toward FENRIR only (docs/TOOLS.md invariant)"
+    return None
+
+
+def credential_denied(method: str, path: str) -> str | None:
+    """Escape-hatch gate (R146): the reason if method+path manages credentials/auth,
+    else None. Every verb on the token and session endpoints is refused."""
+    m = method.upper()
+    p = posixpath.normpath(normalize(path)).lower()
+    for methods, pattern in _CREDENTIAL_DENY:
+        if (methods == "*" or m in methods) and re.match(pattern + r"(?![\w.-])", p):
+            return _CREDENTIAL_REASON
     return None
 
 

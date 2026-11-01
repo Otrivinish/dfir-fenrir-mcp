@@ -102,6 +102,8 @@ Use `add-json`, not flag-form `add` (mis-parses `-e`).
 .venv/bin/fenrir-mcp login     # user + pass + TOTP, then pick role cap
 .venv/bin/fenrir-mcp status    # token meta + live check
 .venv/bin/fenrir-mcp logout    # revoke server-side + wipe local
+.venv/bin/fenrir-mcp tokens list          # your FENRIR API tokens (never values)
+.venv/bin/fenrir-mcp tokens revoke <id>   # revoke one of your tokens
 ```
 
 - Token role cap chosen at login. Never above your FENRIR account role.
@@ -141,7 +143,21 @@ token cap too low; re-login higher.
 - Bytes flow toward FENRIR only. No evidence/export/photo/report bytes to disk.
   Hard denylist, curated + escape hatch, every mode. Text exports inline only.
 - MCP never mints tokens. `POST /api/tokens` denylisted. Login CLI only.
+  FENRIR itself refuses a token create made with a Bearer token (403
+  `token_create_requires_session`); `login` mints on its password + TOTP session.
 - `/api/auth/*` denylisted.
+- Principle (owner, 2026-10-07): through the MCP the model never receives a
+  secret and never grants access; reducing/restoring access and reads stay.
+  Not offered by the curated tools, and refused on every path (shared hard
+  denylist, curated + `fenrir_api`): user create, role/active/TOTP update,
+  password reset, SIEM key generate, service-key set, SMTP/webhook/syslog
+  config writes, team-member adds. Kept: unlock, session revoke, user delete,
+  member remove, key deletes, config reads (backend redacts their secrets).
+  Use the FENRIR GUI for the rest.
+- `fenrir_api` refuses all credential management, every verb: `/api/tokens*`,
+  `/api/admin/tokens*`, sessions, user create/update/delete, password reset,
+  unlock, SIEM key, service-key writes. Path decoded + case/`..`/`//` normalised
+  first (query/fragment cut before decoding, so `%3F`/`%23` hide nothing). Use the GUI or `fenrir-mcp tokens list|revoke` (docs/TOOLS.md).
 - TLS 1.3 floor. Pinned CA. verify never off. Redirects off.
   (Pinned-CA path relaxes RFC 5280 strict-format check only — generate-certs.sh
   CAs lack keyUsage; chain + hostname still verified. System-store stays strict.)
@@ -169,12 +185,12 @@ symlinks it to `~/.claude/skills/`.
 
 ```
 src/fenrir_mcp/
-  __main__.py     entry: serve (default) | login | logout | status
+  __main__.py     entry: serve (default) | login | logout | status | tokens list|revoke
   server.py       MCPServer, tier-gated registration, startup checks
   config.py       env + env-file + upload allowlist
   client.py       httpx: TLS, bearer, errors, slim, ref-rewrite, semaphore
   token_store.py  keyring -> 0600 file
-  cli.py          login / logout / status
+  cli.py          login / logout / status / tokens list|revoke
   denylist.py     single-source hard denylist + byte-drift scan
   openapi_guard.py escape-hatch spec validation
   refcache.py     INC-ref -> UUID memory
@@ -190,6 +206,6 @@ uv run pytest     # 35 tests: denylist, tiering, guard, uploads, tls, env, effic
 
 ## Compromise response
 
-`fenrir-mcp logout`. Or revoke elsewhere: GUI Settings > API tokens, admin
-`/api/admin/tokens`. Audit filters on token prefix `claude-mcp`. Blast radius =
+`fenrir-mcp logout`. Or revoke elsewhere: `fenrir-mcp tokens revoke <id>`, GUI
+Settings > Account > API tokens, admin GUI Admin > API Tokens or `/api/admin/tokens`. Audit filters on token prefix `claude-mcp`. Blast radius =
 8 h TTL x role cap x VPN reach.

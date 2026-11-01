@@ -21,12 +21,24 @@ async def fenrir_intel_lookup(
     incident_id: str | None = None,
     item_id: str | None = None,
     query: str | None = None,
+    tag: str | None = None,
+    limit: int | None = None,
+    cursor: str | None = None,
 ) -> dict | list | str:
     """Reference lookups: incident MITRE coverage / global coverage, LOLBins
     (lookup/search/check_text take query), validated analysis tools, threat-actor
     catalog (+item), cross-incident shared entities/IOCs, the incident detection
     bundle (detections_rules returns Sigma/YARA rule TEXT inline), YARA rules and
-    incident matches, incident attributions + suggestions."""
+    incident matches, incident attributions + suggestions.
+    correlations_iocs / correlations_entities are paged: limit (1-200, default 50),
+    and next_cursor passed back as cursor. correlations_iocs also takes tag: only
+    values where any matching IOC carries that tag (422 invalid_tag when the tag
+    has no usable characters)."""
+    correlations = ("correlations_iocs", "correlations_entities")
+    if (limit is not None or cursor) and view not in correlations:
+        raise FenrirError("limit / cursor page view=correlations_iocs or correlations_entities only")
+    if tag and view != "correlations_iocs":
+        raise FenrirError("tag filters view=correlations_iocs only")
     per_incident = {
         "mitre_coverage": "mitre/coverage", "detections": "detections",
         "detections_rules": "detections/download", "yara_matches": "yara/matches",
@@ -40,7 +52,8 @@ async def fenrir_intel_lookup(
         if not item_id:
             raise FenrirError("item_id is required for view=threat_actor_item")
         return await request("GET", f"/api/threat-actors/{item_id}")
-    q = params(q=query, query=query, text=query) if query else None
+    q = params(q=query, query=query, text=query) if query else {}
+    q.update(params(tag=tag, limit=limit, cursor=cursor))
     paths = {
         "mitre_global": "/api/mitre/coverage",
         "lolbins_lookup": "/api/lolbins/lookup",
@@ -54,7 +67,7 @@ async def fenrir_intel_lookup(
         "correlations_iocs": "/api/correlations/iocs",
         "yara_rules": "/api/yara",
     }
-    return await request("GET", paths[view], params=q)
+    return await request("GET", paths[view], params=q or None)
 
 
 @tool("readonly")
