@@ -25,7 +25,8 @@ async def fenrir_incident_list(
 
 @tool("readonly")
 async def fenrir_incident_get(
-    incident_id: str, snapshot: bool = False, gates: bool = False, start_checks: bool = False
+    incident_id: str, snapshot: bool = False, gates: bool = False, start_checks: bool = False,
+    phase_history: bool = False,
 ) -> dict:
     """Get one incident. snapshot=True returns counts instead of the base record: iocs,
     entities, evidence, timeline, affected_systems, assignments, playbook_total/done/skipped,
@@ -34,6 +35,8 @@ async def fenrir_incident_get(
     recovery / notifications / start_checks roll-ups, and phase_history (time in phase, from
     the audit log: {phase, entered_at = start of the current period, closed, periods[{phase,
     entered_at, left_at, duration_seconds, ended_by}], completed[{phase, seconds, periods}]}).
+    phase_history=True returns only that phase_history object (cheaper than the snapshot;
+    left_at / duration_seconds are null on the current period).
     start_checks=True returns only the incident-start checks: {total, ok, warning, overdue,
     overdue_after_minutes, overdue_at, items: [{key, label, status ok|warning|overdue, detail,
     route}]} — IC / Comms Lead / Legal Liaison assigned, detection time, type set (a SIEM
@@ -54,9 +57,10 @@ async def fenrir_incident_get(
     exhibits without custodian or legal hold, open working-copy downloads, unacknowledged LE
     packages, and the missing IC (and breach: DPO) sign-off. Check it before resolving or
     closing; report warnings to the operator, don't treat them as blockers."""
-    if snapshot + gates + start_checks > 1:
-        raise FenrirError("pass only one of snapshot=True, gates=True, start_checks=True")
-    suffix = "/snapshot" if snapshot else "/gates" if gates else "/start-checks" if start_checks else ""
+    if snapshot + gates + start_checks + phase_history > 1:
+        raise FenrirError("pass only one of snapshot=True, gates=True, start_checks=True, phase_history=True")
+    suffix = ("/snapshot" if snapshot else "/gates" if gates else "/start-checks" if start_checks
+              else "/phase-history" if phase_history else "")
     return await request("GET", f"/api/incidents/{incident_id}{suffix}")
 
 

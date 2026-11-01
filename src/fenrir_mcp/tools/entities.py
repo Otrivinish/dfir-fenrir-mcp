@@ -13,9 +13,11 @@ from . import params, project, tool
 async def fenrir_entity_list(
     incident_id: str,
     view: Literal[
-        "entities", "relations", "asset_log", "affected_systems", "entity_files", "incident_files"
+        "entities", "relations", "asset_log", "affected_systems", "entity_files", "incident_files",
+        "file_exhibit_prefill",
     ] = "entities",
     entity_id: str | None = None,
+    file_id: str | None = None,
     compromised: bool | None = None,
     match: str | None = None,
     linked_type: Literal["exhibit", "timeline_event", "ioc"] | None = None,
@@ -37,8 +39,17 @@ async def fenrir_entity_list(
     _name, capture_tool / _version, capture_method, capture_source, capture_url, capture_context,
     capture_sha256) and `links` [{id, target_type, target_id, target_label, note, ...}]: what each
     corroborates. linked_type + linked_id (view=incident_files, both or neither) list only the files
-    linked to that exhibit (evidence id), timeline event or IOC."""
+    linked to that exhibit (evidence id), timeline event or IOC.
+    file_exhibit_prefill (file_id required): what fenrir_entity_write(register_exhibit) would
+    pre-fill on a NEW draft exhibit from the file's capture record, without registering: acquired_at,
+    acquisition tool/version, source_system, source_path (+ style), screen_state; null = no capture
+    value; `left_empty` = source fields the source check would refuse. If the incident already holds
+    an exhibit with the same SHA-256, registering links that one and pre-fills nothing."""
     base = f"/api/incidents/{incident_id}"
+    if view == "file_exhibit_prefill":
+        if not file_id:
+            raise FenrirError("file_id is required for view=file_exhibit_prefill")
+        return await request("GET", f"{base}/files/{file_id}/exhibit-prefill")
     if compromised is not None and view != "entities":
         raise FenrirError("compromised filters view=entities only")
     if match is not None and view != "entities":
@@ -110,7 +121,8 @@ async def fenrir_entity_write(
     capture_url (style cloud_uri for https/s3/gs/az/abfss, else other), screen_state ←
     capture_context, acquisition_hash_target ← capture_sha256 with upload_hash_check
     match; a source value the source check refuses is left empty
-    (prefill.left_empty), never a refused registration.
+    (prefill.left_empty), never a refused registration. Preview it first with
+    fenrir_entity_list(view="file_exhibit_prefill").
     link_file (file_id required) records that the file corroborates an exhibit, timeline
     event or IOC of the same incident: data={"target_type": "exhibit"|"timeline_event"|"ioc",
     "target_id": "<evidence / event / IOC id>", "note": "..."} (404 evidence_not_found /

@@ -16,8 +16,8 @@ from . import params, project, tool
 async def fenrir_comms_list(
     incident_id: str | None = None,
     view: Literal[
-        "comments", "case_notes", "case_note", "case_note_revisions", "scratchpads", "oob_log", "warroom",
-        "warroom_online", "notifications"
+        "comments", "case_notes", "case_note", "case_note_revisions", "scratchpads", "scratchpad_versions",
+        "oob_log", "warroom", "warroom_online", "notifications"
     ] = "comments",
     note_id: str | None = None,
     filters: dict | None = None,
@@ -36,7 +36,9 @@ async def fenrir_comms_list(
     view=case_note: one entry (note_id). view=case_note_revisions: every revision of the note
     that note_id belongs to, revision 1 first, each signed by whoever saved it. view=scratchpads: legacy per-analyst scratchpads, read-only (your
     private one only to you) -- post one with fenrir_comms_write(case_note_add,
-    data={source_scratchpad_id}). view=warroom: the first page is the newest `limit`
+    data={source_scratchpad_id}). view=scratchpad_versions: one scratchpad's saved versions,
+    newest first (note_id = the scratchpad; a non-author sees only versions saved while shared).
+    view=warroom: the first page is the newest `limit`
     messages (items oldest-first within the page); pass next_cursor as cursor for the
     next OLDER page."""
     if view == "notifications":
@@ -53,6 +55,10 @@ async def fenrir_comms_list(
             raise FenrirError("note_id is required for view=case_note_revisions")
         return project(await request("GET", f"{base}/case-notes/{note_id}/revisions",
                                      params=params(limit=limit, cursor=cursor)), fields)
+    if view == "scratchpad_versions":
+        if not note_id:
+            raise FenrirError("note_id is required for view=scratchpad_versions")
+        return project(await request("GET", f"{base}/notes/{note_id}/versions"), fields)
     if view == "case_notes":
         q = {k: v for k, v in (filters or {}).items()
              if k in ("current", "author_id", "evidence_id", "entity_id", "ioc_id", "timeline_event_id") and v}

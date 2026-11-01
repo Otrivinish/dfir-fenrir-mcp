@@ -113,14 +113,16 @@ async def fenrir_forensic_list(
 
 @tool("standard")
 async def fenrir_email_analyze(
-    action: Literal["analyze", "from_evidence", "extract_attachment", "import_hops", "promote_iocs", "mint_evidence",
-                    "containment"],
+    action: Literal["analyze", "analyze_bulk", "from_evidence", "domain_check", "extract_attachment", "import_hops",
+                    "promote_iocs", "mint_evidence", "containment"],
     incident_id: str,
     analysis_id: str | None = None,
     evidence_id: str | None = None,
     file_path: str | None = None,
+    file_paths: list | None = None,
     attachment_index: int | None = None,
     data: dict | None = None,
+    confirm_outbound: bool = False,
 ) -> dict:
     """Offline phishing triage. Register-first (G3): the message analysed IS an exhibit.
     - analyze: upload a local .eml/.msg (file_path; streamed in chunks, encrypted as it arrives, never
@@ -130,6 +132,16 @@ async def fenrir_email_analyze(
       data may carry acquired_at (UTC ISO, when the message was acquired). No quarantine copy is made.
       The result's `upload` says how the file was registered (registered | sha256_match). A message
       that can't be parsed stays registered: the error names the exhibit (then use from_evidence).
+    - analyze_bulk: file_paths (each inside FENRIR_MCP_UPLOAD_DIRS) = several .eml/.msg, or ONE .zip
+      of them (<= 200 messages, <= 250 MB; a multipart upload held whole in memory at both ends, so
+      use analyze for a single message). Each message is registered as its own draft exhibit, then
+      analysed; the run shares a batch_id; oversized/invalid members come back in skipped / errors.
+      data may carry acquired_at. Live SPF/DMARC/DKIM per sender domain (skipped, audited, under
+      Dark Operation).
+    - domain_check: data={"domain": ..., "selector"?: ...}: live SPF + DMARC DNS check of a domain
+      (DKIM only with a selector). Read-only, works on a closed incident. The lookup leaves FENRIR: on
+      a TLP:RED or Dark Operation incident it fails with 409 outbound_confirmation_required; ask the
+      operator, and only if they agree retry with confirm_outbound=True (audited).
     - from_evidence: analyse a registered exhibit, no upload (evidence_id). It must be active, in
       internal custody, no pending transfer; its hash is re-verified (409 evidence_hash_mismatch
       freezes it); the run is logged in its custody log (evidence_examine).
@@ -144,12 +156,25 @@ async def fenrir_email_analyze(
     Each analysis is a run record: evidence_id (+ evidence_identifier, evidence_sealed), input_sha256,
     analyser_name / analyser_version, exhibit_link (registered | sha256_match | from_evidence).
     Complete and seal the draft later: fenrir_evidence_register(action="acquisition_record") then
-    fenrir_evidence_custody(action="seal"). Analysis is slow and serialized. Closed incident: 409."""
+    fenrir_evidence_custody(action="seal"). Analysis is slow and serialized. Closed incident: 409
+    (except domain_check)."""
     base = f"/api/incidents/{incident_id}/email"
     if action == "analyze":
         if not file_path:
             raise FenrirError("file_path is required for analyze")
         return await _upload_then_analyse(incident_id, file_path, "email", _acquired(data), "email")
+    if action == "analyze_bulk":
+        if not file_paths:
+            raise FenrirError("file_paths is required for analyze_bulk")
+        return await request("POST", f"{base}/analyze-bulk",
+                             files=[("files", config.read_upload(p)) for p in file_paths],
+                             data=_acquired(data), expensive=True, long_call=True)
+    if action == "domain_check":
+        if not (data or {}).get("domain"):
+            raise FenrirError('domain_check takes data={"domain": "...", "selector"?: "..."}')
+        return await request("GET", f"{base}/domain-check", params=params(
+            domain=data["domain"], selector=data.get("selector"),
+            confirm_outbound="true" if confirm_outbound else None))
     if action == "from_evidence":
         if not evidence_id:
             raise FenrirError("evidence_id is required for from_evidence")

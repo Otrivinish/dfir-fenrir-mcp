@@ -39,7 +39,6 @@ _DELETABLE: dict[str, tuple[bool, str]] = {
     "osint_session": (True, "/api/incidents/{i}/osint/sessions/{r}"),
     "checklist_item": (True, "/api/incidents/{i}/post-incident/checklist/{r}"),
     "timeline_import": (True, "/api/incidents/{i}/forensic/timeline-import/imports/{r}"),
-    "email_analysis": (True, "/api/incidents/{i}/email/{r}"),
     "attribution": (True, "/api/incidents/{i}/attributions/{r}"),
     "on_call_entry": (False, "/api/on-call/{r}"),
     "org_contact": (False, "/api/contacts/{r}"),
@@ -56,7 +55,7 @@ async def fenrir_delete(
         "file", "cost", "legal_deadline", "stakeholder", "playbook_task",
         "respond_action", "respond_decision", "pcap_analysis", "webhistory_upload",
         "artifact", "collection", "osint_session", "checklist_item", "timeline_import",
-        "email_analysis", "attribution", "on_call_entry", "org_contact", "stakeholder_matrix_rule", "yara_rule",
+        "attribution", "on_call_entry", "org_contact", "stakeholder_matrix_rule", "yara_rule",
     ],
     resource_id: str,
     incident_id: str | None = None,
@@ -193,7 +192,9 @@ async def fenrir_admin_platform(
     API-token oversight (list all users' tokens, revoke by id — issuance is
     never possible through the MCP). Setting a service key, generating the SIEM key
     and saving SMTP / syslog / webhook config are FENRIR GUI only (secrets, outbound
-    redirection)."""
+    redirection). The incident-reference prefix (new incidents get PREFIX-YYYY-NNNNN; existing
+    refs never change) is read / set with fenrir_api GET / PATCH /api/settings/incident-ref
+    {prefix: 2-10 chars, A-Z then A-Z/0-9}; GET also previews the next ref (not reserved)."""
     body = data or {}
     simple = {
         "api_keys_status": ("GET", "/api/settings/api-keys", False),

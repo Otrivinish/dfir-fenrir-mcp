@@ -126,7 +126,7 @@ async def request(
     *,
     params: dict | None = None,
     json: Any = None,
-    files: dict | None = None,
+    files: dict | list | None = None,
     data: dict | None = None,
     expensive: bool = False,
     long_call: bool = False,
