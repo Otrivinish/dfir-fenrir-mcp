@@ -16,14 +16,20 @@ async def fenrir_entity_list(
         "entities", "relations", "asset_log", "affected_systems", "entity_files", "incident_files"
     ] = "entities",
     entity_id: str | None = None,
+    compromised: bool | None = None,
     limit: int | None = None,
     cursor: str | None = None,
     fields: list | None = None,
 ) -> dict | list:
     """Entity-side reads: entities, entity relations, per-entity asset log
     (entity_id required for asset_log/entity_files), affected systems, and the
-    incident file store (metadata only — file bytes never leave FENRIR)."""
+    incident file store (metadata only — file bytes never leave FENRIR).
+    Affected systems ARE the compromised entities: prefer view=entities with
+    compromised=True (paginated); view=affected_systems is the deprecated old
+    shape (id = entity id, plus entity_id/entity_type, not paginated)."""
     base = f"/api/incidents/{incident_id}"
+    if compromised is not None and view != "entities":
+        raise FenrirError("compromised filters view=entities only")
     if view in ("asset_log", "entity_files"):
         if not entity_id:
             raise FenrirError(f"entity_id is required for view={view}")
@@ -35,7 +41,9 @@ async def fenrir_entity_list(
         "affected_systems": f"{base}/affected-systems",
         "incident_files": f"{base}/files",
     }
-    return project(await request("GET", paths[view], params=params(limit=limit, cursor=cursor)), fields)
+    return project(
+        await request("GET", paths[view], params=params(limit=limit, cursor=cursor, compromised=compromised)), fields
+    )
 
 
 @tool("standard")
@@ -50,7 +58,12 @@ async def fenrir_entity_write(
     data: dict | None = None,
 ) -> dict:
     """Create/update entities, add relations, append asset-log events (entity_id
-    required), create/update affected systems (system_id for update)."""
+    required), create/update affected systems (system_id for update).
+    create_entity data may set compromised=true: that IS adding an affected
+    system (preferred). Deprecated create_affected_system upserts a compromised
+    entity (type from system_type); update_affected_system edits that entity
+    (system_id = entity id or an old affected-system id). Un-flag with
+    update_entity data={"compromised": false}."""
     base = f"/api/incidents/{incident_id}"
     body = data or {}
     if action == "create_entity":

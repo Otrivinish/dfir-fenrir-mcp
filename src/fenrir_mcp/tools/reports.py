@@ -47,8 +47,12 @@ async def fenrir_report_generate(
     data: dict | None = None,
 ) -> dict:
     """Generate and save a report server-side (data: report type/options), or
-    prepare a law-enforcement package (AES-256, Ed25519-signed — stays on the
-    server; the recipient link/retrieval is handled in the GUI). Slow, serialized."""
+    prepare a law-enforcement package (AES-256 encrypted, manifest HMAC-SHA-256 — stays
+    on the server; the recipient link/retrieval is handled in the GUI). Slow, serialized.
+    le_package_prepare (and fenrir_report_data le_packages / le_package_item) is
+    incident-lead only: an admin, or an analyst assigned as Incident Commander or
+    Deputy on this incident (403 not_incident_lead). A non-admin build notifies the
+    admins."""
     if action == "report_save":
         return await request("POST", f"/api/incidents/{incident_id}/reports", json=data or {}, expensive=True)
     return await request("POST", f"/api/incidents/{incident_id}/le-package", json=data or {}, expensive=True)

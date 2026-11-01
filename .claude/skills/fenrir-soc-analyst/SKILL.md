@@ -26,7 +26,8 @@ read in court.
   - incidents: `["id","ref","title","severity","status","phase","occurred_at"]`
   - timeline: `["id","occurred_at","title","severity","category"]`
   - iocs: `["id","type","value","verdict","source"]`
-  - entities/affected systems: `["id","name","kind","status"]`
+  - entities (affected systems = `compromised=true`):
+    `["id","type","value","name","compromised","containment"]`
 - `incident_id` accepts `INC-####` directly — never list incidents just to
   find a UUID.
 - Never `incident_get(snapshot=true)` unless the operator asks for a full
@@ -40,8 +41,9 @@ read in court.
 
 1. **Orient** — `fenrir_incident_get(ref)`: severity, phase, status, summary.
    New session? `fenrir_whoami` first to confirm role cap covers writes.
-2. **Sweep** — newest timeline events, IOC list, affected systems (fields +
-   limit ≤ 50). Note gaps: no timeline? no IOCs? that IS a finding.
+2. **Sweep** — newest timeline events, IOC list, affected systems
+   (`fenrir_entity_list compromised=true`) (fields + limit ≤ 50). Note gaps:
+   no timeline? no IOCs? that IS a finding.
 3. **Hypothesize** — map observations to ATT&CK (`fenrir_intel_lookup`
    mitre_coverage / lolbins_check_text on suspicious command lines) and check
    cross-incident overlap (correlations, threat_intel incident_matches).
@@ -73,4 +75,6 @@ For the step-by-step sequences with exact payload fields and known API
 gotchas, read [references/playbooks.md](references/playbooks.md) when running:
 phishing email analysis, PCAP analysis, IOC sweep + enrichment, forensic
 timeline import, evidence/chain-of-custody operations, or incident close-out
-(close has a hard lessons-learned gate).
+(Resolve and Close each pass a phase gate — read `fenrir_incident_get
+gates=true` first; override only on the operator's explicit decision; close
+needs a sign-off reason; re-open needs a reason and a phase).

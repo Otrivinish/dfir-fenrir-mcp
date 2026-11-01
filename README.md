@@ -182,9 +182,6 @@ src/fenrir_mcp/
 tests/            40 tests
 ```
 
-`docs/` (DESIGN, TOOLS, SBD-REVIEW, api-inventory) and `THREAT_MODEL.md` are
-gitignored — local-only, they describe deployment posture + full API surface.
-
 ## Dev
 
 ```sh

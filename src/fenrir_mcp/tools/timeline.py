@@ -37,7 +37,14 @@ async def fenrir_timeline_write(
     events: list | None = None,
 ) -> dict | list:
     """Add one event (data), add a batch (events list), or update one (event_id +
-    data). Event timestamps must be UTC ISO 8601 (YYYY-MM-DDTHH:MM:SSZ)."""
+    data). Event timestamps must be UTC ISO 8601 (YYYY-MM-DDTHH:MM:SSZ).
+    data.entity_id links the event to an entity of THIS incident (404 unknown,
+    422 entity_other_incident; a batch item is skipped with an error); an empty
+    hostname takes the entity's value. ir_phase: an 800-61 phase key. On update,
+    entity_id / ir_phase sent as null unlink / clear. An event promoted from a
+    timeline import (forensic_import_id set) keeps its facts: changing event_time,
+    hostname, source, event_type, description or raw_log returns 409
+    imported_fact_immutable; annotate it with ir_phase, ATT&CK or entity_id."""
     if action == "add":
         return await request("POST", f"/api/incidents/{incident_id}/timeline", json=data or {})
     if action == "add_batch":

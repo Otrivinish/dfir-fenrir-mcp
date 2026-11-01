@@ -56,17 +56,25 @@ async def fenrir_delete(
     resource_id: str,
     incident_id: str | None = None,
     sub_id: str | None = None,
+    reason: str | None = None,
 ) -> dict:
     """THE deletion tool — the only way to hard-delete records via MCP. Deletions
     are audited server-side but destructive: be certain the operator asked for
     this specific removal. sub_id is the nested id (e.g. the timeline event id of
-    an ioc_timeline_link, the file id of an entity_file)."""
+    an ioc_timeline_link, the file id of an entity_file). legal_deadline needs
+    reason (10-2000 chars, sent in the JSON body; the audit keeps it and a full
+    copy of the deadline; 422 reason_required without it); a closed incident
+    gives 409 incident_closed. affected_system only clears the entity's
+    compromised flag (the entity stays; delete it as resource_type=entity)."""
     needs_incident, template = _DELETABLE[resource_type]
     if needs_incident and not incident_id:
         raise FenrirError(f"incident_id is required to delete {resource_type}")
     if "{s}" in template and not sub_id:
         raise FenrirError(f"sub_id is required to delete {resource_type}")
     path = template.replace("{i}", incident_id or "").replace("{r}", resource_id).replace("{s}", sub_id or "")
+    if resource_type == "legal_deadline" and reason is not None:
+        # In the body, not ?reason= (query strings land in access logs).
+        return await request("DELETE", path, json={"reason": reason})
     return await request("DELETE", path)
 
 

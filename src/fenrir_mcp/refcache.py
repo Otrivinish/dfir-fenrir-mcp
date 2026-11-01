@@ -1,6 +1,7 @@
 """Persistent incident ref→UUID memory (~/.config/fenrir-mcp/refcache.json, 0600).
 
-FENRIR's API takes incident UUIDs; humans and Claude think in `INC-0006` refs.
+FENRIR's API takes incident UUIDs; humans and Claude think in refs — `INC-2026-00009`
+(PREFIX-YYYY-NNNNN) or, for incidents created before that format, `INC-0006`.
 The cache learns id/ref pairs from every incident response that passes through
 the client, so tools accept either form without a wasted incident_list round
 trip. Non-secret metadata only."""
@@ -13,7 +14,9 @@ import re
 
 from . import config
 
-REF_RE = re.compile(r"^[A-Z]{2,10}-[A-Za-z0-9]{1,12}$")
+# PREFIX-NNNN (legacy) or PREFIX-YYYY-NNNNN. No "/" or "." can match, so a ref never
+# changes the shape of the path it is substituted into.
+REF_RE = re.compile(r"^[A-Z][A-Z0-9]{1,9}(-[A-Za-z0-9]{1,12}){1,2}$")
 # The cached id is substituted into a request path, so it must not carry path
 # separators or dot-segments (a poisoned FENRIR response could otherwise inject
 # e.g. "x/../../tokens"). FENRIR ids are UUIDs; this charset covers them and

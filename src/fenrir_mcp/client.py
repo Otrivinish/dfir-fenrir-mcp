@@ -4,6 +4,7 @@ structured error mapping, expensive-call serialization. Fail closed everywhere."
 from __future__ import annotations
 
 import asyncio
+import json
 import ssl
 from typing import Any
 
@@ -61,18 +62,33 @@ def _bearer() -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+_EXTRA_MAX = 2000   # chars of an error's extra keys (e.g. gate_unmet's unmet list) passed on
+
+
 def _raise_for(resp: httpx.Response) -> None:
+    """FENRIR errors are flat {detail, code, …extra}: the message is "[code] detail" plus any
+    extra keys (e.g. gate, unmet), so the model can branch on the code and see what is missing."""
     detail = ""
+    err_code = None
     try:
         body = resp.json()
         detail = body.get("detail") or body.get("message") or ""
         if isinstance(detail, (list, dict)):
             detail = str(detail)
+        if isinstance(body.get("code"), str) and body["code"]:
+            err_code = body["code"]
+            extra = {k: v for k, v in body.items() if k not in ("detail", "code", "message")}
+            detail = f"[{err_code}] {detail}"
+            if extra:
+                detail += " " + json.dumps(extra, default=str, ensure_ascii=False)[:_EXTRA_MAX]
     except Exception:
         detail = resp.text[:300]
     code = resp.status_code
     if code == 401:
         raise FenrirError("FENRIR rejected the token (401) — run `fenrir-mcp login` again. " + detail)
+    if code == 403 and err_code:
+        # A coded 403 is a business rule (e.g. not_custodian), not the token's role cap.
+        raise FenrirError(f"FENRIR returned 403: {detail}")
     if code == 403:
         raise FenrirError(
             f"forbidden (403): the token's role cap or incident access does not allow this. "
@@ -94,16 +110,20 @@ async def request(
     data: dict | None = None,
     expensive: bool = False,
 ) -> Any:
-    # Incident ref memory: /api/incidents/INC-0006/… → /api/incidents/<uuid>/…,
-    # learning the mapping from a single list fetch when the ref is new.
+    # Incident ref memory: /api/incidents/INC-2026-00009/… → /api/incidents/<uuid>/….
+    # A new ref is resolved with FENRIR's exact ?ref= filter; servers without that
+    # filter ignore it, so fall back to learning from the first 200 incidents.
     path, missing = refcache.rewrite_path(path)
     if missing:
-        await request("GET", "/api/incidents", params={"limit": 200})
+        await request("GET", "/api/incidents", params={"ref": missing, "limit": 1})
         path, missing = refcache.rewrite_path(path)
         if missing:
+            await request("GET", "/api/incidents", params={"limit": 200})
+            path, missing = refcache.rewrite_path(path)
+        if missing:
             raise FenrirError(
-                f"unknown incident ref {missing!r} — not in the first 200 incidents; "
-                "use the incident UUID (fenrir_incident_list shows both)"
+                f"unknown incident ref {missing!r} — not found by exact lookup or in the first "
+                "200 incidents; use the incident UUID (fenrir_incident_list shows both)"
             )
     reason = denylist.is_denied(method, path)
     if reason:

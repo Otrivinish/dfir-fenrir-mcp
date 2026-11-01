@@ -41,15 +41,17 @@ async def fenrir_ioc_write(
     data: dict | None = None,
     iocs: list | None = None,
 ) -> dict | list:
-    """Add one IOC (data: type, value, …), add a batch (iocs list), update one
-    (ioc_id + data), or link an IOC to a timeline event (ioc_id + data with event_id)."""
+    """Add one IOC (data: type, value, …; evidence_id = the exhibit it was found in), add a
+    batch (iocs: list of the same objects, 1-1000; sent as {"items": iocs}; returns created,
+    skipped duplicates and errors), update one (ioc_id + data), or link an IOC to a timeline
+    event (ioc_id + data with event_id)."""
     base = f"/api/incidents/{incident_id}/iocs"
     if action == "add":
         return await request("POST", base, json=data or {})
     if action == "add_batch":
         if not iocs:
             raise FenrirError("iocs list is required for add_batch")
-        return await request("POST", f"{base}/batch", json={"iocs": iocs})
+        return await request("POST", f"{base}/batch", json={"items": iocs})
     if not ioc_id:
         raise FenrirError("ioc_id is required for update/link_timeline")
     if action == "update":

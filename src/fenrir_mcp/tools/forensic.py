@@ -68,7 +68,7 @@ async def fenrir_email_analyze(
 ) -> dict:
     """Offline phishing triage: analyze a local .eml/.msg (file_path), then on an
     existing analysis (analysis_id): extract an attachment server-side
-    (attachment_index), import received-hops to the timeline, promote IOCs, or
+    (attachment_index), import received-hops to the timeline (idempotent), promote IOCs, or
     mint the email as evidence. Analysis is slow and serialized."""
     base = f"/api/incidents/{incident_id}/email"
     if action == "analyze":
@@ -127,25 +127,47 @@ async def fenrir_webhistory_import(
 
 @tool("standard")
 async def fenrir_timeline_import(
-    action: Literal["parse_upload", "from_artifact", "create_import"],
+    action: Literal["parse_upload", "from_artifact", "create_import", "from_evidence", "promote"],
     incident_id: str,
     artifact_id: str | None = None,
+    evidence_id: str | None = None,
+    import_id: str | None = None,
     file_path: str | None = None,
     data: dict | None = None,
 ) -> dict:
-    """Forensic timeline import: parse a local artifact upload (file_path), parse a
-    stored artifact (artifact_id), or create an import from parsed events (data).
-    Parsing is slow and serialized."""
+    """Forensic timeline import. Parsing is slow and serialized.
+    - parse_upload: stateless preview of a local file (file_path); nothing stored.
+    - create_import: upload a local file (file_path, multipart) and store the parse; data
+      {source_tz} = IANA zone of times the file doesn't state (default UTC). A file whose
+      SHA-256 equals exactly one exhibit of the incident is linked to it (evidence_id).
+    - from_evidence: parse a registered exhibit, no upload (evidence_id; data {source_tz
+      (required), parser: auto|evtx|xml|sqlite|csv|tsv|syslog|json}). The exhibit must be active,
+      in internal custody, no pending transfer; its hash is re-verified (409 evidence_hash_mismatch
+      freezes it) and the run is logged in its custody log (evidence_examine).
+    - from_artifact: parse an ingested Velociraptor collection (artifact_id).
+    - promote: copy stored events onto the timeline by index (import_id; data {indices: [idx…],
+      ir_phase?}). FENRIR copies times from the parse; events without a time are skipped and
+      listed, already-promoted indices are skipped. Promoted facts are immutable afterwards
+      (timeline edits of time/host/source/type/description/raw_log → 409).
+    Each parsed event has time_basis: explicit | assumed_tz (read in source_tz) | inferred_year
+    (BSD syslog, year from the exhibit's acquisition time) | missing."""
     base = f"/api/incidents/{incident_id}/forensic/timeline-import"
-    if action == "parse_upload":
+    if action in ("parse_upload", "create_import"):
         if not file_path:
-            raise FenrirError("file_path is required for parse_upload")
-        return await request("POST", f"{base}/parse", files=_upload(file_path), data=data or {}, expensive=True)
+            raise FenrirError(f"file_path is required for {action}")
+        path = f"{base}/parse" if action == "parse_upload" else f"{base}/imports"
+        return await request("POST", path, files=_upload(file_path), data=data or {}, expensive=True)
     if action == "from_artifact":
         if not artifact_id:
             raise FenrirError("artifact_id is required for from_artifact")
         return await request("POST", f"{base}/from-artifact/{artifact_id}", json=data or {}, expensive=True)
-    return await request("POST", f"{base}/imports", json=data or {})
+    if action == "from_evidence":
+        if not evidence_id:
+            raise FenrirError("evidence_id is required for from_evidence")
+        return await request("POST", f"{base}/from-evidence/{evidence_id}", json=data or {}, expensive=True)
+    if not import_id:
+        raise FenrirError("import_id is required for promote")
+    return await request("POST", f"{base}/imports/{import_id}/promote", json=data or {})
 
 
 @tool("standard")

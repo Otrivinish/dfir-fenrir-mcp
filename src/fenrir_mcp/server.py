@@ -62,7 +62,7 @@ def run() -> None:
             "`fenrir-mcp login` in a terminal. Token efficiency: list tools accept "
             "limit and fields=[…] — always pass fields when you only need a few keys, "
             "and prefer filtered lists over incident_get(snapshot=true). incident_id "
-            "params accept either the UUID or the INC-#### ref (resolved and remembered "
+            "params accept either the UUID or the incident ref — INC-2026-00009, or INC-0006 for older incidents (resolved and remembered "
             "locally). Responses omit null/empty fields by design."
         ),
     )
